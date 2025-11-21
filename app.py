@@ -28,7 +28,11 @@ conn_str = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
 )
-engine = create_engine(conn_str)
+DB_URL = f"postgresql://{st.secrets['DB_USER']}:{st.secrets['DB_PASS']}@" \
+         f"{st.secrets['DB_HOST']}:{st.secrets['DB_PORT']}/{st.secrets['DB_NAME']}"
+
+engine = create_engine(DB_URL)
+
 
 
 # -------------------------------------------------
