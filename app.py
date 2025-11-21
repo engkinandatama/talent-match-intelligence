@@ -15,24 +15,23 @@ st.set_page_config(
 st.title("🧠 Talent Match Intelligence")
 st.caption("Professional minimalist dashboard – powered by Supabase & SQL Talent Engine")
 
-# Ambil config DB dari st.secrets (nanti kamu isi di .streamlit/secrets.toml)
-DB_CONFIG = st.secrets.get("db", {
-    "host": "YOUR_DB_HOST",
-    "port": "5432",
-    "database": "postgres",
-    "user": "postgres",
-    "password": "YOUR_PASSWORD"
-})
+# 🔹 Ambil DB_URL dari secrets
+DB_URL = st.secrets["DB_URL"]
 
-conn_str = (
-    f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
-    f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
-)
-DB_URL = f"postgresql://{st.secrets['DB_USER']}:{st.secrets['DB_PASS']}@" \
-         f"{st.secrets['DB_HOST']}:{st.secrets['DB_PORT']}/{st.secrets['DB_NAME']}"
+# 🔹 Siapkan SQLAlchemy engine
+engine = create_engine(DB_URL, pool_pre_ping=True)
 
-engine = create_engine(DB_URL)
+# 🔹 (Opsional tapi sangat berguna) — Test koneksi
+def test_connection():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        st.success("✓ Connected to Supabase Postgres database")
+    except Exception as e:
+        st.error("✗ Database Connection FAILED")
+        st.exception(e)
 
+test_connection()
 
 
 # -------------------------------------------------
@@ -55,24 +54,29 @@ def load_high_performers(min_rating: int = 5):
     """
     return pd.read_sql(text(sql), engine, params={"min_rating": min_rating})
 
-def build_match_sql(manual_hp_ids, role_position_id, min_hp_rating: int) -> str:
-    """Bangun SQL engine dengan params dari UI."""
 
-    # Mode A: manual HP → buat ARRAY['EMP100001','EMP100002']::text[]
+# -------------------------------------------------
+# 3. BUILD TALENT MATCH SQL ENGINE
+# -------------------------------------------------
+
+def build_match_sql(manual_hp_ids, role_position_id, min_hp_rating: int) -> str:
+
+    # Mode A: Manual HP
     if manual_hp_ids:
         manual_list_sql = ",".join(f"'{emp}'" for emp in manual_hp_ids)
         manual_array_sql = f"ARRAY[{manual_list_sql}]::text[]"
     else:
-        manual_array_sql = "ARRAY[]::text[]"  # empty array
+        manual_array_sql = "ARRAY[]::text[]"
 
-    # Mode B: role-based
+    # Mode B: Role-based
     role_sql = "NULL" if role_position_id is None else str(role_position_id)
 
+    # RAW SQL ENGINE – sudah aman
     sql = f"""
 WITH params AS (
     SELECT
-        {manual_array_sql} AS manual_hp,      -- Mode A
-        {role_sql}::int AS role_position_id,  -- Mode B
+        {manual_array_sql} AS manual_hp,
+        {role_sql}::int AS role_position_id,
         {min_hp_rating}::int AS min_hp_rating
 ),
 
@@ -260,12 +264,11 @@ LIMIT 200;
 
 def run_match_query(manual_hp_ids, role_position_id, min_hp_rating):
     sql = build_match_sql(manual_hp_ids, role_position_id, min_hp_rating)
-    df = pd.read_sql(sql, engine)
-    return df
+    return pd.read_sql(sql, engine)
 
 
 # -------------------------------------------------
-# 3. SIDEBAR – BENCHMARK SETTINGS (Mode A + B)
+# 4. SIDEBAR INPUT
 # -------------------------------------------------
 
 st.sidebar.header("⚙️ Benchmark Settings")
@@ -274,10 +277,12 @@ min_rating = st.sidebar.slider("Minimum rating as High Performer", 1, 5, 5)
 
 positions_df = load_positions()
 position_options = {row["name"]: row["position_id"] for _, row in positions_df.iterrows()}
+
 position_label = st.sidebar.selectbox(
     "Target Position (Mode B – optional)",
     ["(None)"] + list(position_options.keys())
 )
+
 selected_position_id = None if position_label == "(None)" else position_options[position_label]
 
 hp_df = load_high_performers(min_rating)
@@ -293,16 +298,11 @@ manual_ids = [
     label.split(" – ")[0] for label in manual_selected
 ]
 
-st.sidebar.caption(
-    "💡 Kamu bisa pakai salah satu, atau gabungan Mode A (manual) dan Mode B (role). "
-    "Kalau dua-duanya kosong, engine akan pakai semua karyawan dengan rating ≥ threshold."
-)
-
 run_button = st.sidebar.button("🚀 Run Talent Match")
 
 
 # -------------------------------------------------
-# 4. MAIN – RUN ENGINE & DISPLAY RESULTS
+# 5. MAIN OUTPUT
 # -------------------------------------------------
 
 if run_button:
@@ -310,22 +310,17 @@ if run_button:
         result_df = run_match_query(manual_ids, selected_position_id, min_rating)
 
     st.subheader("📊 Ranked Talent List")
+
     st.write(
         f"Benchmark based on **{len(manual_ids)} manual HP(s)** "
         f"and **position: {position_label}** (min rating **{min_rating}**)."
     )
 
-    # Sedikit formatting
     df_view = result_df.copy()
     df_view["final_match_rate"] = df_view["final_match_rate"].round(2)
 
-    st.dataframe(
-        df_view,
-        hide_index=True,
-        use_container_width=True
-    )
+    st.dataframe(df_view, hide_index=True, use_container_width=True)
 
-    # Highlight top candidate
     if not df_view.empty:
         top_row = df_view.iloc[0]
         st.markdown("---")
@@ -340,10 +335,11 @@ if run_button:
                 **Final Match Score:** {top_row['final_match_rate']:.2f}
                 """
             )
+
         with col2:
             st.metric("Final Match", f"{top_row['final_match_rate']:.2f}")
 
-        # Option to download
+        # Download
         st.markdown("### ⬇️ Download Results")
         csv = df_view.to_csv(index=False).encode("utf-8")
         st.download_button(
